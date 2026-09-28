@@ -1,5 +1,6 @@
 # LABORATORIO
 import time
+import wave
 from collections import deque
 import config
 
@@ -38,6 +39,8 @@ def actualizar():
 
     nombre = _cola.popleft()
     ruta, duracion = config.SONIDOS[nombre]
+    with wave.open(ruta, "rb") as audio:
+        duracion = max(duracion, audio.getnframes() / audio.getframerate())
 
     winsound.PlaySound(
         ruta,
@@ -46,3 +49,7 @@ def actualizar():
 
     _actual = nombre
     _hasta = ahora + duracion
+
+
+def hay_pendientes():
+    return _actual is not None or bool(_cola)

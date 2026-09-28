@@ -77,16 +77,53 @@ def abrir_procesos(cantidad=5, segundos=15):
 
 
 def simular_alerta(metrica):
-    if metrica == "memoria":
-        valor = config.RAM_ALTA + 5
+    if metrica in ("cpu", "memoria", "disco", "red"):
+        umbrales = {
+            "cpu": config.CPU_ALTO,
+            "memoria": config.RAM_ALTA,
+            "disco": config.DISCO_LLENO,
+            "red": config.RED_PICO_KBS,
+        }
+        umbrales_bajos = {
+            "cpu": config.CPU_BAJO,
+            "memoria": config.RAM_BAJA,
+            "disco": config.DISCO_ALIVIADO,
+            "red": config.RED_CALMA_KBS,
+        }
+        valor_bajo = umbrales_bajos[metrica]
+        valor = umbrales[metrica]
+        extra = {"nucleos": [0.0]} if metrica == "cpu" else None
+        if metrica == "memoria":
+            extra = {"usa_swap": False, "swap_pct": 0.0}
+        lectura_baja = {"valor": valor_bajo}
+        lectura_alta = {"valor": valor}
+        if extra is not None:
+            lectura_baja["extra"] = extra
+            lectura_alta["extra"] = extra
+        for _ in range(config.VENTANA):
+            registro.agregar(metrica, valor_bajo)
+        for nombre, dato in eventos.detectar(metrica, lectura_baja):
+            eventos.atender(nombre, dato)
         for _ in range(config.VENTANA):
             registro.agregar(metrica, valor)
-        lectura = {"valor": valor, "extra": {"usa_swap": True, "swap_pct": 50.0}}
+        lectura = lectura_alta
+    elif metrica == "procesos":
+        lectura = {
+            "valor": 1,
+            "extra": {
+                "identidades": {},
+                "top": [{"nombre": "Proceso simulado",
+                         "cpu": config.PROCESO_PESADO}],
+            },
+        }
+    elif metrica == "bateria":
+        lectura = {"valor": config.BATERIA_RECUPERADA,
+                   "extra": {"conectado": False}}
+        for nombre, dato in eventos.detectar(metrica, lectura):
+            eventos.atender(nombre, dato)
+        lectura["valor"] = config.BATERIA_BAJA
     else:
-        valor = config.DISCO_LLENO + 1
-        for _ in range(config.VENTANA):
-            registro.agregar(metrica, valor)
-        lectura = {"valor": valor}
+        raise ValueError(f"Metrica no soportada: {metrica}")
     generados = eventos.detectar(metrica, lectura)
     for nombre, dato in generados:
         eventos.atender(nombre, dato)
@@ -100,6 +137,7 @@ class GeneradorVentana:
         self.estado = tk.StringVar(value="Listo")
         ventana.title("Generador de pruebas - Monitor IoT")
         ventana.geometry("560x360")
+        self.sonidos_programados = False
 
         marco = ttk.Frame(ventana, padding=14)
         marco.pack(fill="both", expand=True)
@@ -107,16 +145,11 @@ class GeneradorVentana:
         ttk.Label(marco, text="Ejecuta cada prueba en segundo plano.").pack(anchor="w", pady=(2, 12))
 
         botones = ttk.Frame(marco)
-        botones.pack(fill="x")
-        for texto, funcion in (("CPU", cargar_cpu), ("RAM", cargar_memoria),
-                               ("Disco", cargar_disco), ("Procesos", abrir_procesos)):
+        botones.pack(fill="x", pady=8)
+        for texto, metrica in (("RAM", "memoria"), ("DISCO", "disco"),
+                               ("PROCESOS", "procesos"), ("CPU", "cpu"),
+                               ("TODOS LOS SENSORES", "todos")):
             ttk.Button(botones, text=texto,
-                       command=lambda f=funcion, n=texto: self.ejecutar(n, f)).pack(side="left", padx=3)
-
-        alertas = ttk.Frame(marco)
-        alertas.pack(fill="x", pady=8)
-        for texto, metrica in (("Alerta RAM", "memoria"), ("Alerta disco", "disco")):
-            ttk.Button(alertas, text=texto,
                        command=lambda m=metrica: self.alerta(m)).pack(side="left", padx=3)
 
         ttk.Label(marco, textvariable=self.estado).pack(anchor="w", pady=5)
@@ -142,10 +175,32 @@ class GeneradorVentana:
             self.ventana.after(0, lambda: self.termino(nombre, f"error: {error}"))
 
     def alerta(self, metrica):
-        nombre = "RAM" if metrica == "memoria" else "disco"
-        resultado = simular_alerta(metrica)
-        self.estado.set(f"Alerta {nombre} generada")
-        self.escribir(f"Alerta {nombre}: {resultado}")
+        if metrica == "todos":
+            sensores = (("CPU", "cpu"), ("RAM", "memoria"),
+                        ("DISCO", "disco"), ("PROCESOS", "procesos"),
+                        ("RED", "red"), ("BATERIA", "bateria"))
+            resultado = " | ".join(
+                f"{nombre}: {simular_alerta(sensor)}"
+                for nombre, sensor in sensores
+            )
+            nombre = "todos los sensores"
+        else:
+            nombre = {"memoria": "RAM", "disco": "DISCO",
+                      "procesos": "PROCESOS", "cpu": "CPU"}[metrica]
+            resultado = simular_alerta(metrica)
+        self.estado.set(f"Prueba de {nombre} generada")
+        self.escribir(f"{nombre}: {resultado}")
+        self._sondear_sonidos()
+
+    def _sondear_sonidos(self):
+        sonidos.actualizar()
+        if sonidos.hay_pendientes() and not self.sonidos_programados:
+            self.sonidos_programados = True
+            self.ventana.after(100, self._actualizar_sonidos)
+
+    def _actualizar_sonidos(self):
+        self.sonidos_programados = False
+        self._sondear_sonidos()
 
     def termino(self, nombre, resultado):
         self.estado.set(f"{nombre}: {resultado}")

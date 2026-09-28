@@ -119,6 +119,7 @@ def proceso_cerrado(dato):
   
   
 def proceso_pesado(dato): 
+    sonidos.agregar("proceso_pesado")
     return ("AVISO", f"{dato['nombre']} consume {dato['cpu']}% de CPU") 
   
   
